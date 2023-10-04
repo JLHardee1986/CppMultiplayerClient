@@ -1,0 +1,373 @@
+Now we need to set up some data to send. Lets create a header file called "NetworkData.h". We do not need a cpp file. This file will just define some data types for us.
+
+In this header file:
+
+C++
+#include <string.h>
+
+#define MAX_PACKET_SIZE 1000000
+
+enum PacketTypes {
+
+    INIT_CONNECTION = 0,
+
+    ACTION_EVENT = 1,
+
+}; 
+and now we will define a packet struct to serve as a container to our data to send:
+
+C++
+struct Packet {
+
+    unsigned int packet_type;
+
+    void serialize(char * data) {
+        memcpy(data, this, sizeof(Packet));
+    }
+
+    void deserialize(char * data) {
+        memcpy(this, data, sizeof(Packet));
+    }
+};
+The packet_type field will be filled using the values in the enumerator we just created.
+
+The serialize function is used to convert the packet_type data into bytes that we can send over the network.
+
+The deserialize function is used to convert bytes received over the network back into packet_type data that we can interpret.
+
+You will need to include NetworkData.h inside your ServerGame, ServerNetwork, ClientGame, and ClientNetwork classes!
+
+Lets have the client send an INIT_CONNECTION packet when it is first connected to the server inside its constructor:
+
+C++
+ClientGame::ClientGame(void)
+{
+
+    network = new ClientNetwork();
+
+    // send init packet
+    const unsigned int packet_size = sizeof(Packet);
+    char packet_data[packet_size];
+
+    Packet packet;
+    packet.packet_type = INIT_CONNECTION;
+
+    packet.serialize(packet_data);
+
+    NetworkServices::sendMessage(network->ConnectSocket, packet_data, packet_size);
+}
+We just created a packet and gave it an INIT_CONNECTION type and sent it over the network using the sendMessage() function which we wrote earlier. We used the socket that the client had used to connect to the server.
+
+Now lets read that message on the server side.
+
+Add the following function to ServerNetwork's header file:
+
+under public:
+
+C++
+// receive incoming data
+int receiveData(unsigned int client_id, char * recvbuf);
+Then this for the cpp definition:
+
+C++
+// receive incoming data
+int ServerNetwork::receiveData(unsigned int client_id, char * recvbuf)
+{
+    if( sessions.find(client_id) != sessions.end() )
+    {
+        SOCKET currentSocket = sessions[client_id];
+        iResult = NetworkServices::receiveMessage(currentSocket, recvbuf, MAX_PACKET_SIZE);
+        if (iResult == 0)
+        {
+            printf("Connection closed\n");
+            closesocket(currentSocket);
+        }
+        return iResult;
+    }
+    return 0;
+} 
+The above function will receive data waiting on the socket for a given client ID and fill the passed buffer (recvbuf) with the data read from the network.
+
+Lets call it from the ServerGame to read data sent from the client.
+
+Add the following to the header file of ServerGame:
+
+under public:
+
+C++
+void receiveFromClients();
+under private:
+
+C++
+// data buffer
+char network_data[MAX_PACKET_SIZE];
+Define receiveFromClients() in the cpp file. In this function we go through all the clients that we saved in the sessions table earlier as each were connected. Then we call receiveData() on all of them and get the data insideour network_data buffer. We then deserialize the packet and switch between whether it is an INIT or ACTION packet. In this same way, you may extend this program for different packets and struct containers of different sizes to do different things.
+
+C++
+Shrink ?   
+void ServerGame::receiveFromClients()
+{
+    Packet packet;
+
+    // go through all clients
+    std::map<unsigned int, SOCKET>::iterator iter;
+
+    for(iter = network->sessions.begin(); iter != network->sessions.end(); iter++)
+    {
+        // get data for that client
+        int data_length = network->receiveData(iter->first, network_data);
+
+        if (data_length <= 0) 
+        {
+            //no data recieved
+            continue;
+        }
+
+        int i = 0;
+        while (i < (unsigned int)data_length) 
+        {
+            packet.deserialize(&(network_data[i]));
+            i += sizeof(Packet);
+
+            switch (packet.packet_type) {
+
+                case INIT_CONNECTION:
+
+                    printf("server received init packet from client\n");
+
+                    break;
+
+                case ACTION_EVENT:
+
+                    printf("server received action event packet from client\n");
+
+                    break;
+
+                default:
+
+                    printf("error in packet types\n");
+
+                    break;
+            }
+        }
+    }
+}
+Now call receiveFromClients() inside of ServerGame::update():
+
+C++
+void ServerGame::update()
+{
+    // get new clients
+   if(network->acceptNewClient(client_id))
+   {
+        printf("client %d has been connected to the server\n",client_id);
+
+        client_id++;
+   }
+
+   receiveFromClients();
+}
+If you run the program now, you should see a message for client connecting to the server and then another message stating that the server has received an INIT packet.
+
+
+
+Lets extend the program for the clients to send ACTION packets to the server and the server to send ACTION packets to the clients.
+
+The client will send an INIT packet, then the server will send an ACTION packet and upon receipt, the client will send an ACTION packet, and then the server will receive the ACTION packet, and send another, and etc.
+
+In ServerNetwork, add a function which will send messages to all connected clients.
+
+In the header file:
+
+C++
+// send data to all clients
+void sendToAll(char * packets, int totalSize);
+In the cpp file:
+
+C++
+// send data to all clients
+void ServerNetwork::sendToAll(char * packets, int totalSize)
+{
+    SOCKET currentSocket;
+    std::map<unsigned int, SOCKET>::iterator iter;
+    int iSendResult;
+
+    for (iter = sessions.begin(); iter != sessions.end(); iter++)
+    {
+        currentSocket = iter->second;
+        iSendResult = NetworkServices::sendMessage(currentSocket, packets, totalSize);
+
+        if (iSendResult == SOCKET_ERROR) 
+        {
+            printf("send failed with error: %d\n", WSAGetLastError());
+            closesocket(currentSocket);
+        }
+    }
+}
+Inside ServerGame.h, add the following declaration under public fields:
+
+C++
+void sendActionPackets();
+Inside the ServerGame.cpp, add the following function which will send action packets to all connected clients:
+
+C++
+void ServerGame::sendActionPackets()
+{
+    // send action packet
+    const unsigned int packet_size = sizeof(Packet);
+    char packet_data[packet_size];
+
+    Packet packet;
+    packet.packet_type = ACTION_EVENT;
+
+    packet.serialize(packet_data);
+
+    network->sendToAll(packet_data,packet_size);
+}
+Modify the ServerGame::receiveFromClients() to the following:
+
+C++
+Shrink ?   
+void ServerGame::receiveFromClients()
+{
+
+    Packet packet;
+
+    // go through all clients
+    std::map<unsigned int, SOCKET>::iterator iter;
+
+    for(iter = network->sessions.begin(); iter != network->sessions.end(); iter++)
+    {
+        int data_length = network->receiveData(iter->first, network_data);
+
+        if (data_length <= 0) 
+        {
+            //no data recieved
+            continue;
+        }
+
+        int i = 0;
+        while (i < (unsigned int)data_length) 
+        {
+            packet.deserialize(&(network_data[i]));
+            i += sizeof(Packet);
+
+            switch (packet.packet_type) {
+
+                case INIT_CONNECTION:
+
+                    printf("server received init packet from client\n");
+
+                    sendActionPackets();
+
+                    break;
+
+                case ACTION_EVENT:
+
+                    printf("server received action event packet from client\n");
+
+                    sendActionPackets();
+
+                    break;
+
+                default:
+
+                    printf("error in packet types\n");
+
+                    break;
+            }
+        }
+    }
+}
+Lets add functionality for clients to receive packets from the server.
+
+In ClientNetwork.h add the following under public fields:
+
+C++
+int receivePackets(char *);
+and in its cpp file:
+
+C++
+int ClientNetwork::receivePackets(char * recvbuf) 
+{
+    iResult = NetworkServices::receiveMessage(ConnectSocket, recvbuf, MAX_PACKET_SIZE);
+
+    if ( iResult == 0 )
+    {
+        printf("Connection closed\n");
+        closesocket(ConnectSocket);
+        WSACleanup();
+        exit(1);
+    }
+
+    return iResult;
+}
+In ClientGame's header file, add the following under public fields:
+
+C++
+void sendActionPackets();
+
+char network_data[MAX_PACKET_SIZE];
+
+void update();
+
+void ClientGame::sendActionPackets()
+{
+    // send action packet
+    const unsigned int packet_size = sizeof(Packet);
+    char packet_data[packet_size];
+
+    Packet packet;
+    packet.packet_type = ACTION_EVENT;
+
+    packet.serialize(packet_data);
+
+    NetworkServices::sendMessage(network->ConnectSocket, packet_data, packet_size);
+}
+
+void ClientGame::update()
+{
+    Packet packet;
+    int data_length = network->receivePackets(network_data);
+
+    if (data_length <= 0) 
+    {
+        //no data recieved
+        return;
+    }
+
+    int i = 0;
+    while (i < (unsigned int)data_length) 
+    {
+        packet.deserialize(&(network_data[i]));
+        i += sizeof(Packet);
+
+        switch (packet.packet_type) {
+
+            case ACTION_EVENT:
+
+                printf("client received action event packet from server\n");
+
+                sendActionPackets();
+
+                break;
+
+            default:
+
+                printf("error in packet types\n");
+
+                break;
+        }
+    }
+}
+And finally, call client's update function inside the clientLoop in main.cpp so that the network will send and receive:
+
+C++
+void clientLoop()
+{
+    while(true)
+    {
+        //do game stuff
+        client->update();
+    }
+}}
