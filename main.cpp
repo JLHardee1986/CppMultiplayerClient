@@ -10,21 +10,31 @@ void clientLoop(void);
 ServerGame* server;
 ClientGame* client;
 
-int main()
+Game* game{ nullptr };
+
+int main(int argc, char* argv[])
 {
-
-	// initialize the client
-	client = new ClientGame();
-
 	// initialize the server
 	server = new ServerGame();
+
+
+	getchar();
+	// bound socket managed on this program, the server-side,
+	// should have the client loop connect to this first on the other side
+	// then have the client bind their socket for incoming an then we bind to that socket from here
+		// initialize the client
+	client = new ClientGame();
+
+	game = new Game();
 
 	// create thread with arbitrary argument for the run function
 	_beginthread(serverLoop, 0, (void*)12);
 
-
-
 	clientLoop();
+
+	delete game;
+
+	return 0;
 }
 
 void serverLoop(void* arg)
@@ -37,10 +47,14 @@ void serverLoop(void* arg)
 
 void clientLoop()
 {
-	while (true)
+	while (game->m_wnd->isOpen())
 	{
-		//do game stuff
-	   //will later run client->update();
+
+		game->handle_Input();
+		game->handle_Events();
+		game->update_GameFrame();
+		game->draw_GameFrame();
+
 		client->update();
 	}
 }

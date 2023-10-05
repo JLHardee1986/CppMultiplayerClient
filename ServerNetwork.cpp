@@ -33,7 +33,7 @@ ServerNetwork::ServerNetwork(void)
 	iResult = getaddrinfo(NULL, LISTEN_PORT, &hints, &result);
 
 	if (iResult != 0) {
-		printf("getaddrinfo failed with error: %d\n", iResult);
+		printf("getaddr info failed with error: %d\n", iResult);
 		WSACleanup();
 		exit(1);
 	}
